@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fileshare explorer</title>
+<link rel="stylesheet" href="explorer.css">
+</head>
+<body>
+<div id="loading">
+  <p id="plabel">Loading the explorer…</p>
+  <div id="ptrack" class="indeterminate"><div id="pbar"></div></div>
+  <p id="err"></p>
+</div>
+<canvas id="screen"></canvas>
+<!-- No inline script: the portal's Content-Security-Policy allows scripts
+     from its own origin only (script-src 'self' 'wasm-unsafe-eval'). -->
+<script src="wasm_exec.js"></script>
+<script src="boot.js"></script>
+</body>
+</html>
