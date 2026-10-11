@@ -28,6 +28,9 @@ func serve(t *testing.T) (*Client, string, *atomic.Int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// After the server (cleanups run last first): the directory is held
+	// open until then, and Windows cannot remove a held directory.
+	t.Cleanup(func() { _ = fsys.Close() })
 	h, err := webdav.New(fsys, webdav.WithPrefix("/files"), webdav.ReadWrite())
 	if err != nil {
 		t.Fatal(err)

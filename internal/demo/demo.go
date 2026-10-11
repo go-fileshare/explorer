@@ -22,7 +22,15 @@ import (
 // Portal is the stand-in, serving dir as server "demo"'s share "files".
 type Portal struct {
 	*httptest.Server
-	Dir string
+	Dir  string
+	fsys *osfs.FS
+}
+
+// Close stops the server, then lets go of the directory: osfs holds it open
+// (an os.Root), and Windows will not remove a directory that is held.
+func (p *Portal) Close() {
+	p.Server.Close()
+	_ = p.fsys.Close()
 }
 
 // New serves dir; with seed, a few files and a folder are put in it first.
@@ -48,6 +56,7 @@ func New(dir string, seed bool) (*Portal, error) {
 	// comes back: hrefs are the server's own paths.
 	share, err := webdav.New(fsys, webdav.WithPrefix("/files"), webdav.ReadWrite())
 	if err != nil {
+		_ = fsys.Close()
 		return nil, err
 	}
 	mux := http.NewServeMux()
@@ -74,7 +83,7 @@ func New(dir string, seed bool) (*Portal, error) {
 		}
 		mux.ServeHTTP(w, r)
 	})
-	return &Portal{Server: httptest.NewServer(guarded), Dir: dir}, nil
+	return &Portal{Server: httptest.NewServer(guarded), Dir: dir, fsys: fsys}, nil
 }
 
 // destination rewrites a MOVE's or COPY's Destination from the portal's URL
