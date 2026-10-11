@@ -1,0 +1,120 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: "off"
+  CGO_ENABLED: "0"
+  # The servers the browser test runs: the portal that passes WebDAV, and the
+  # fileshare whose WebDAV appends pieces and lists its root.
+  FILESHARE_VERSION: v0.29.0
+  PORTAL_VERSION: v0.2.0
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod, cache: true }
+      - run: go vet ./...
+      - name: gofmt
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go'))
+          [ -z "$unformatted" ] || { echo "::error::not gofmt-clean:"; echo "$unformatted"; exit 1; }
+      - run: go test -count=1 ./...
+      - name: The browser build, which is where it runs
+        shell: bash
+        run: GOOS=js GOARCH=wasm go vet . && GOOS=js GOARCH=wasm go build -o /dev/null . && GOOS=js GOARCH=wasm go build -tags e2e -o /dev/null .
+
+  race:
+    name: race detector
+    runs-on: ubuntu-latest
+    env: { CGO_ENABLED: "1" }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod, cache: true }
+      - run: go test -race -count=1 ./...
+
+  coverage:
+    name: coverage (floor recorded; the standard is 100%)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod, cache: true }
+      # The explorer and its WebDAV client; not the stand-in portal. What is
+      # left is mostly the native main(), which opens a window.
+      - run: |
+          set -o pipefail
+          FLOOR=88.0
+          go test -coverprofile=cover.out -coverpkg=github.com/go-fileshare/explorer,github.com/go-fileshare/explorer/internal/dav ./... >/dev/null
+          go tool cover -func=cover.out | grep -v "100.0%"
+          cov=$(go tool cover -func=cover.out | tail -1 | awk '{print $3}' | tr -d '%')
+          echo "coverage: ${cov}%  floor: ${FLOOR}%  standard: 100%"
+          if awk -v c="$cov" -v f="$FLOOR" 'BEGIN{exit !(c+0 < f+0)}'; then
+            echo "::error::coverage ${cov}% fell below the recorded floor ${FLOOR}%"; exit 1
+          fi
+
+  mvvm:
+    name: MVVM gate
+    uses: go-widgets/mvvmlint/.github/workflows/mvvmlint.yml@main
+
+  bricolint:
+    name: Hand-drawn-UI gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod, cache: true }
+      - run: go install github.com/go-widgets/bricolint/cmd/bricolint@v0.1.0
+      - run: go vet -vettool="$(go env GOPATH)/bin/bricolint" ./...
+      - name: Negative control (the guard must bite)
+        run: BRICOLINT="$(go env GOPATH)/bin/bricolint" bash hack/bricolint-negative-control.sh
+
+  # The explorer as deployed: explorer.wasm in headless Chrome, behind the
+  # portal binary over TLS, in front of fileshare's WebDAV. It logs in, lists
+  # the shares, uploads 20 MiB in pieces, makes a folder, is refused a
+  # rename onto a file, downloads one, and deletes -- each checked on disk.
+  browser:
+    name: In a browser, behind the portal, in front of fileshare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod, cache: true }
+      - run: |
+          GOBIN="$RUNNER_TEMP/bin" go install "github.com/go-fileshare/portal@${PORTAL_VERSION}"
+          GOBIN="$RUNNER_TEMP/bin" go install "github.com/go-fileshare/fileshare@${FILESHARE_VERSION}"
+      - name: The browser test, which must run rather than skip
+        working-directory: e2e
+        run: |
+          set -o pipefail
+          PORTAL="$RUNNER_TEMP/bin/portal" FILESHARE="$RUNNER_TEMP/bin/fileshare" CHROME="$(command -v google-chrome)" \
+            go test -count=1 -v ./... | tee e2e.log
+          grep -q -- '--- PASS: TestE2EExplorerInABrowserBehindThePortal' e2e.log
+
+  vuln:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod, cache: true }
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
