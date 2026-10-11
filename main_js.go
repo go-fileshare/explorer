@@ -15,11 +15,13 @@ import (
 	"github.com/go-widgets/window"
 
 	"github.com/go-fileshare/portal/client"
+
+	"github.com/go-fileshare/explorer/internal/dav"
 )
 
 func main() {
 	origin := js.Global().Get("location").Get("origin").String()
-	p := client.New(origin, nil, client.WebLocks("fileshare-portal-refresh"))
+	p := client.New(origin, nil, client.WebLocks(client.RefreshLock))
 	w, err := window.Open(window.Config{Title: "fileshare explorer", Canvas: "screen"})
 	if err != nil {
 		println("explorer:", err.Error())
@@ -30,8 +32,8 @@ func main() {
 		wake = r.Repaint
 	}
 	q := mvvm.NewQueue(wake)
-	vm := newViewModel(context.Background(), p, browserHost{}, q)
-	v := newView(vm, q, nil)
+	vm := newViewModel(context.Background(), portalBackend{p}, browserHost{}, q)
+	v := newView(vm, nil, q, nil)
 	expose(vm)
 	vm.Start()
 	_ = w.Run(v.root)
@@ -42,12 +44,12 @@ type browserHost struct{}
 
 func (browserHost) Navigate(url string) { js.Global().Get("location").Call("assign", url) }
 
-// Download follows a link to url: the browser fetches it, as the attachment
+// Download follows a link to e: the browser fetches it, as the attachment
 // the portal makes it, and writes it to disk as it comes.
-func (browserHost) Download(url string) {
+func (browserHost) Download(c *dav.Client, e dav.Entry) {
 	doc := js.Global().Get("document")
 	a := doc.Call("createElement", "a")
-	a.Set("href", url)
+	a.Set("href", c.DownloadURL(e.Path))
 	a.Set("download", "")
 	doc.Get("body").Call("appendChild", a)
 	a.Call("click")

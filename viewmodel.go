@@ -22,12 +22,39 @@ import (
 	"github.com/go-fileshare/explorer/internal/dav"
 )
 
-// host is what the explorer needs of where it runs: the browser, or a test.
+// backend is how the explorer reaches the servers: through the portal in a
+// browser (portalBackend), or directly with its own login natively.
+type backend interface {
+	// Session is who is logged in, and the servers; client.ErrNotLoggedIn
+	// when nobody is.
+	Session(ctx context.Context) (*client.Session, error)
+	// DAV is a server's WebDAV.
+	DAV(server string) *dav.Client
+	// EnsureToken makes sure a current token for server is held, before a
+	// download that cannot refresh and try again.
+	EnsureToken(ctx context.Context, server string) error
+	// Logout ends the login, and returns where to end it at the provider
+	// ("" if nowhere).
+	Logout(ctx context.Context) (string, error)
+	// LoginURL is where to go to log in again, coming back to returnTo.
+	LoginURL(returnTo string) string
+}
+
+// portalBackend is the browser's: every request through the portal, which
+// holds the tokens.
+type portalBackend struct{ *client.Portal }
+
+func (p portalBackend) DAV(server string) *dav.Client {
+	return dav.New(p.Base()+"/dav/"+server, p.Doer(server, pieceMax))
+}
+
+// host is what the explorer needs of where it runs: the browser, a native
+// window, or a test.
 type host interface {
-	// Download has the browser fetch url -- a navigation, which the portal
-	// answers as an attachment -- so the file streams to disk and never
-	// through this program's memory.
-	Download(url string)
+	// Download saves the file e of c: a browser follows a link -- a
+	// navigation, which the portal answers as an attachment -- and a native
+	// window streams it into a folder; never whole in this program's memory.
+	Download(c *dav.Client, e dav.Entry)
 	// PickFiles asks the person for files to upload, and hands them over.
 	PickFiles(got func([]upload))
 	// Navigate leaves the explorer: to log in, or to log out at the
@@ -45,7 +72,7 @@ type upload struct {
 const pieceMax = 16 << 20
 
 type viewModel struct {
-	portal *client.Portal
+	portal backend
 	host   host
 	q      *mvvm.Queue
 	ctx    context.Context
@@ -72,7 +99,7 @@ type viewModel struct {
 	clients    map[string]*dav.Client
 }
 
-func newViewModel(ctx context.Context, p *client.Portal, h host, q *mvvm.Queue) *viewModel {
+func newViewModel(ctx context.Context, p backend, h host, q *mvvm.Queue) *viewModel {
 	vm := &viewModel{portal: p, host: h, q: q, ctx: ctx,
 		User: mvvm.NewObservable(""), Status: mvvm.NewObservable("Loading..."), Busy: mvvm.NewObservable(false),
 		Servers: mvvm.NewObservableList[client.Server](), ServerSel: mvvm.NewObservable(-1),
@@ -199,7 +226,7 @@ func (vm *viewModel) dav() *dav.Client {
 	s, _ := vm.server()
 	c, ok := vm.clients[s.ID]
 	if !ok {
-		c = dav.New(vm.portal.Base()+"/dav/"+s.ID, vm.portal.Doer(s.ID, pieceMax))
+		c = vm.portal.DAV(s.ID)
 		vm.clients[s.ID] = c
 	}
 	return c
@@ -354,7 +381,7 @@ func (vm *viewModel) download() {
 		// Started, not done: a browser does not tell the page when its
 		// download ends. The native host says so itself when it does.
 		vm.Status.Set(e.Name + ": download started.")
-		vm.host.Download(c.DownloadURL(e.Path))
+		vm.host.Download(c, e)
 	})
 }
 

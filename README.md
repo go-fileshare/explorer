@@ -69,14 +69,45 @@ the portal sends the `.gz`).
 
 ```sh
 go install github.com/go-fileshare/explorer@latest
+explorer                    # reads ~/Library/Application Support/fileshare-explorer/explorer.hcl (macOS)
+explorer -config my.hcl     # or $XDG_CONFIG_HOME/fileshare-explorer/explorer.hcl elsewhere
 explorer -demo              # over a built-in stand-in: real WebDAV over a temporary directory
 ```
 
-The native explorer does not log in on its own yet. `-demo` opens it over a
-stand-in portal with one server and a share of sample files. Downloads stream into
-`~/Downloads`; one never replaces a file already there, and a name the server
-gives is refused when it is not a plain file name on this system (`..\x`, `c:x`,
-and so on). Uploading needs a native file picker, which is not there yet.
+Natively there is no portal: the explorer logs in itself and calls each
+server's WebDAV with a token addressed to that server.
+
+```hcl
+# explorer.hcl
+issuer "https://login.example.org" {
+  client_id = "fileshare-explorer"     # a PUBLIC client: no secret
+}
+
+server "paris" {
+  label    = "Paris"
+  dav_url  = "https://fs-paris.example.org"   # fileshare's WebDAV, over TLS
+  resource = "https://fs-paris.example.org/"  # the audience of its oidc block
+  # ca_file = "paris-ca.pem"                  # when its certificate is not public
+}
+```
+
+- **Login** goes through the system browser and a loopback listener, as a public
+  client ([go-authn/rp](https://github.com/go-authn/rp), RFC 8252). The refresh
+  token stays in the program's memory and is never written anywhere. It is spent
+  one refresh at a time, because a provider that rotates refresh tokens ends the
+  login when one is spent twice.
+- **Each server gets its own token**, for its `resource` (RFC 8707). A server
+  that refuses a token gets a new one, once. A `dav_url` that is not `https` is
+  refused: a bearer token over cleartext is anybody's.
+- **Uploading** opens the explorer's own picker in place of the server's files:
+  a folder of this computer to move through, with hidden items left out. A file
+  is read one piece at a time, reopened for each piece, so nothing stays open
+  once the upload is over. A file that changes while it is being sent fails the
+  upload rather than sending a mixture. (go-widgets has no native file dialog
+  yet.)
+- **Downloads** stream into `~/Downloads`. A download never replaces a file
+  already there, and a name the server gives is refused when it is not a plain
+  file name on this system (`..\x`, `c:x`, and so on).
 
 ## How it is built
 
@@ -90,6 +121,8 @@ MVVM, as in every go-widgets application:
   widget state of its own.
 - **WebDAV** (`internal/dav`) is the part of RFC 4918 that browsing needs, and
   nothing more: no locks, and no properties beyond the four a listing shows.
+- **Where the servers are** is a `backend`: the portal in a browser, or
+  `internal/direct` natively, which is never linked into the page.
 
 CI runs:
 
@@ -103,6 +136,9 @@ CI runs:
   OpenID provider. It logs in, lists the shares, uploads 20 MiB in three pieces,
   makes a folder, is refused a rename onto an existing file, downloads one and
   deletes the folder. Each step is checked on fileshare's disk.
+- **the native backend against the same real fileshare**: it logs in through a
+  loopback listener, lists the shares, uploads and downloads 20 MiB, and has a
+  token for another audience refused (the control).
 
 ```sh
 cd e2e
@@ -115,8 +151,8 @@ from a public repository is how pictures get published by accident.
 
 ## Not yet
 
-- Native login (through `go-authn/rp`, as the console does) and a native file
-  picker.
+- The system's own file dialog natively (the explorer's picker chooses one file
+  at a time).
 - Resuming an upload after a failure: the pieces would allow it, but today the
   part file is removed.
 - Drag and drop, and several selected entries at once.
