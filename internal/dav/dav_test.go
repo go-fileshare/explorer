@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -208,5 +209,31 @@ func TestURLsAndUnreachable(t *testing.T) {
 	}
 	if (&Error{Op: "o", Path: "/p", Status: 507}).Error() != "o /p: 507 Insufficient Storage" {
 		t.Error("Error()")
+	}
+}
+
+// Get streams a file; a folder, or a file that is not there, is an error.
+func TestGet(t *testing.T) {
+	c, dir, _ := serve(t)
+	ctx := context.Background()
+	_ = os.WriteFile(filepath.Join(dir, "a b.txt"), []byte("contents"), 0o644)
+	rc, err := c.Get(ctx, "/files/a b.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(rc)
+	rc.Close()
+	if string(b) != "contents" {
+		t.Fatalf("%q", b)
+	}
+	var de *Error
+	if _, err := c.Get(ctx, "/files/none"); !errors.As(err, &de) || de.Status != http.StatusNotFound {
+		t.Fatalf("a missing file: %v", err)
+	}
+	if _, err := c.Get(ctx, "/files/"); err == nil {
+		t.Fatal("a folder downloaded as a file")
+	}
+	if _, err := New("http://127.0.0.1:1", http.DefaultClient).Get(ctx, "/f"); err == nil {
+		t.Fatal("nothing listening")
 	}
 }

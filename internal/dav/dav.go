@@ -90,6 +90,22 @@ func (c *Client) url(p string) string {
 // answers as an attachment.
 func (c *Client) DownloadURL(p string) string { return c.url(p) }
 
+// Get is the file p, to be read as it arrives and closed. A collection is
+// not a file: p must not end in /.
+func (c *Client) Get(ctx context.Context, p string) (io.ReadCloser, error) {
+	if strings.HasSuffix(p, "/") {
+		return nil, fmt.Errorf("download %s: a folder is not a file", p)
+	}
+	res, err := c.send(ctx, "download", http.MethodGet, p, nil)
+	if err != nil {
+		return nil, err
+	}
+	if res.StatusCode != http.StatusOK {
+		return nil, expect("download", p, res)
+	}
+	return res.Body, nil
+}
+
 func (c *Client) send(ctx context.Context, op, method, p string, body []byte, hdr ...string) (*http.Response, error) {
 	var rd io.Reader
 	if body != nil {

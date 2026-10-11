@@ -2,9 +2,10 @@
 
 //go:build !(js && wasm)
 
-// The native build. Browsing files natively without a portal is the next
-// step; -demo opens the explorer over a built-in stand-in, with real WebDAV
-// over a temporary directory, to see it and try it.
+// The native build. It logs in itself -- the system browser and a loopback
+// listener -- and calls each server's WebDAV with a token for that server
+// (internal/direct), the servers read from explorer.hcl. -demo opens it over
+// a built-in stand-in instead, with real WebDAV over a temporary directory.
 package main
 
 import (
@@ -12,43 +13,55 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
+	"github.com/go-authn/rp"
 	"github.com/go-widgets/mvvm"
 	"github.com/go-widgets/window"
 
 	"github.com/go-fileshare/portal/client"
 
+	"github.com/go-fileshare/explorer/internal/dav"
 	"github.com/go-fileshare/explorer/internal/demo"
+	"github.com/go-fileshare/explorer/internal/direct"
 )
 
 func main() {
 	demoFlag := flag.Bool("demo", false, "run over a built-in stand-in: one server, real WebDAV over a temporary directory")
+	config := flag.String("config", defaultConfigPath(), "the servers, and where to log in")
 	flag.Parse()
-	if !*demoFlag {
-		fmt.Fprintln(os.Stderr, "explorer: the native explorer cannot log in on its own yet; run it in a browser, served by go-fileshare/portal, or try it with -demo")
-		os.Exit(2)
+	var be backend
+	if *demoFlag {
+		dir, err := os.MkdirTemp("", "explorer-demo")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "explorer:", err)
+			os.Exit(1)
+		}
+		defer os.RemoveAll(dir)
+		d, err := demo.New(dir, true)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "explorer:", err)
+			os.Exit(1)
+		}
+		defer d.Close()
+		be = portalBackend{client.New(d.URL, nil, nil)}
+	} else {
+		cfg, err := loadNative(*config)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "explorer: %v\n(the servers and the identity provider are read from %s; -demo runs without them)\n", err, *config)
+			os.Exit(2)
+		}
+		d, err := direct.New(cfg, rp.OpenBrowser, nil)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "explorer:", err)
+			os.Exit(2)
+		}
+		be = d
 	}
-	dir, err := os.MkdirTemp("", "explorer-demo")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "explorer:", err)
-		os.Exit(1)
-	}
-	defer os.RemoveAll(dir)
-	d, err := demo.New(dir, true)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "explorer:", err)
-		os.Exit(1)
-	}
-	defer d.Close()
-	p := client.New(d.URL, nil, nil)
 
-	w, err := window.Open(window.Config{Title: "fileshare explorer (demo)", Width: 1000, Height: 640})
+	w, err := window.Open(window.Config{Title: "fileshare explorer", Width: 1000, Height: 640})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "explorer:", err)
 		os.Exit(1)
@@ -58,10 +71,16 @@ func main() {
 		wake = r.Repaint
 	}
 	q := mvvm.NewQueue(wake)
-	h := &nativeHost{p: p, dir: downloadsDir()}
-	vm := newViewModel(context.Background(), p, h, q)
+	home, _ := os.UserHomeDir()
+	pk := newPicker(osFS{}, home)
+	h := &nativeHost{dir: downloadsDir(), pick: pk}
+	vm := newViewModel(context.Background(), be, h, q)
 	h.status = func(s string) { q.Post(func() { vm.Status.Set(s) }) }
-	v := newView(vm, q, nil)
+	h.relogin = func() { vm.Status.Set("Log in in your browser..."); vm.Start() }
+	v := newView(vm, pk, q, nil)
+	if !*demoFlag {
+		vm.Status.Set("Log in in your browser...")
+	}
 	vm.Start()
 	if err := w.Run(v.root); err != nil {
 		fmt.Fprintln(os.Stderr, "explorer:", err)
@@ -69,11 +88,13 @@ func main() {
 	}
 }
 
-// nativeHost downloads into a folder, streaming, and has no file picker yet.
+// nativeHost downloads into a folder, streaming, and picks files with the
+// explorer's own picker.
 type nativeHost struct {
-	p      *client.Portal
-	dir    string
-	status func(string)
+	dir     string
+	pick    *picker
+	status  func(string) // from any goroutine
+	relogin func()       // on the UI goroutine
 }
 
 func downloadsDir() string {
@@ -85,51 +106,47 @@ func downloadsDir() string {
 	return os.TempDir()
 }
 
-func (h *nativeHost) Navigate(string) {}
-
-func (h *nativeHost) PickFiles(func([]upload)) {
-	h.status("Uploading from the native explorer needs a file picker, which is not there yet: use the browser.")
+// Navigate is where a browser page would go: natively, logging in again is
+// starting again -- the backend opens the system browser -- and a provider's
+// end-of-session page opens in the system browser.
+func (h *nativeHost) Navigate(to string) {
+	switch {
+	case to == direct.LoginAgain:
+		if h.relogin != nil {
+			h.relogin()
+		}
+	case strings.HasPrefix(to, "https://"):
+		_ = rp.OpenBrowser(to)
+	}
 }
 
-// Download writes the file at u into the downloads folder as it arrives,
-// never whole in memory, refusing to replace a file already there.
-func (h *nativeHost) Download(u string) {
-	go func() {
-		h.status(h.download(u))
-	}()
+func (h *nativeHost) PickFiles(got func([]upload)) { h.pick.Show(got) }
+
+// Download writes e into the downloads folder as it arrives, never whole in
+// memory, refusing to replace a file already there.
+func (h *nativeHost) Download(c *dav.Client, e dav.Entry) {
+	go func() { h.status(h.download(c, e)) }()
 }
 
-func (h *nativeHost) download(u string) string {
-	pu, err := url.Parse(u)
-	if err != nil {
-		return "Download: " + err.Error()
-	}
-	name := path.Base(pu.Path)
-	if strings.HasSuffix(pu.Path, "/") || name == "." || name == "/" || name == ".." { // a folder is no file
-		return "Download: no file name in " + u
-	}
+func (h *nativeHost) download(c *dav.Client, e dav.Entry) string {
 	// The name is the server's (an href it listed): it must name a file in
 	// the folder, on every system -- a backslash is a separator on Windows,
-	// which path.Base does not know.
-	if strings.ContainsAny(name, `/\:`) || !filepath.IsLocal(name) {
+	// and a drive letter would leave the folder.
+	name := e.Name
+	if e.Dir || strings.ContainsAny(name, `/\:`) || !filepath.IsLocal(name) {
 		return fmt.Sprintf("Download: %q is no name to save a file under", name)
 	}
-	server := davServer(pu.Path)
-	req, _ := http.NewRequest(http.MethodGet, u, nil)
-	res, err := h.p.Doer(server, 0).Do(req)
+	rc, err := c.Get(context.Background(), e.Path)
 	if err != nil {
 		return "Download: " + err.Error()
 	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return fmt.Sprintf("Download: the server answered %d", res.StatusCode)
-	}
+	defer rc.Close()
 	dst := filepath.Join(h.dir, name)
 	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return "Download: " + err.Error()
 	}
-	n, err := io.Copy(f, res.Body)
+	n, err := io.Copy(f, rc)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -140,11 +157,59 @@ func (h *nativeHost) download(u string) string {
 	return fmt.Sprintf("Downloaded %s (%s) to %s.", name, bytesString(n), h.dir)
 }
 
-// davServer is the server a /dav/<server>/... path is for.
-func davServer(p string) string {
-	segs := strings.Split(strings.TrimPrefix(p, "/"), "/")
-	if len(segs) > 1 && segs[0] == "dav" {
-		return segs[1]
+// osFS is this computer's disk, for the picker.
+type osFS struct{}
+
+func (osFS) List(dir string) ([]localEntry, error) {
+	des, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
 	}
-	return ""
+	out := make([]localEntry, 0, len(des))
+	for _, de := range des {
+		e := localEntry{Name: de.Name(), Dir: de.IsDir()}
+		if !e.Dir {
+			fi, err := de.Info()
+			if err != nil || !fi.Mode().IsRegular() {
+				continue // a device, a socket, a link to nowhere: nothing to upload
+			}
+			e.Size = fi.Size()
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+func (osFS) Source(path string) (upload, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return upload{}, err
+	}
+	if !fi.Mode().IsRegular() {
+		return upload{}, fmt.Errorf("%s is not a file", path)
+	}
+	return upload{Name: filepath.Base(path), Src: localFile{path: path, size: fi.Size()}}, nil
+}
+
+// localFile is a file of this computer, read a piece at a time and opened
+// for each piece: nothing stays open once the upload is over, however it
+// ends. A file that changes size meanwhile fails the upload.
+type localFile struct {
+	path string
+	size int64
+}
+
+func (l localFile) Size() int64 { return l.size }
+
+func (l localFile) ReadPiece(_ context.Context, off, n int64) ([]byte, error) {
+	f, err := os.Open(l.path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	b := make([]byte, n)
+	if _, err := io.ReadFull(io.NewSectionReader(f, off, n), b); err != nil {
+		return nil, fmt.Errorf("%s changed while it was being sent: %w", l.path, err)
+	}
+	return b, nil
 }

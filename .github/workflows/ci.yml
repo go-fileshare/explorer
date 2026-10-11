@@ -16,7 +16,7 @@ env:
   # The servers the browser test runs: the portal that passes WebDAV, and the
   # fileshare whose WebDAV appends pieces and lists its root.
   FILESHARE_VERSION: v0.29.0
-  PORTAL_VERSION: v0.2.0
+  PORTAL_VERSION: v0.3.0
 
 jobs:
   test:
@@ -59,12 +59,13 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with: { go-version-file: go.mod, cache: true }
-      # The explorer and its WebDAV client; not the stand-in portal. What is
-      # left is mostly the native main(), which opens a window.
+      # The explorer, its WebDAV client and its native login; not the
+      # stand-in portal. What is left is mostly the native main(), which
+      # opens a window.
       - run: |
           set -o pipefail
-          FLOOR=88.0
-          go test -coverprofile=cover.out -coverpkg=github.com/go-fileshare/explorer,github.com/go-fileshare/explorer/internal/dav ./... >/dev/null
+          FLOOR=90.0
+          go test -coverprofile=cover.out -coverpkg=github.com/go-fileshare/explorer,github.com/go-fileshare/explorer/internal/dav,github.com/go-fileshare/explorer/internal/direct ./... >/dev/null
           go tool cover -func=cover.out | grep -v "100.0%"
           cov=$(go tool cover -func=cover.out | tail -1 | awk '{print $3}' | tr -d '%')
           echo "coverage: ${cov}%  floor: ${FLOOR}%  standard: 100%"
@@ -92,6 +93,8 @@ jobs:
   # portal binary over TLS, in front of fileshare's WebDAV. It logs in, lists
   # the shares, uploads 20 MiB in pieces, makes a folder, is refused a
   # rename onto a file, downloads one, and deletes -- each checked on disk.
+  # And the native backend, logging in through a loopback listener, against
+  # the same fileshare's WebDAV.
   browser:
     name: In a browser, behind the portal, in front of fileshare
     runs-on: ubuntu-latest
@@ -109,6 +112,7 @@ jobs:
           PORTAL="$RUNNER_TEMP/bin/portal" FILESHARE="$RUNNER_TEMP/bin/fileshare" CHROME="$(command -v google-chrome)" \
             go test -count=1 -v ./... | tee e2e.log
           grep -q -- '--- PASS: TestE2EExplorerInABrowserBehindThePortal' e2e.log
+          grep -q -- '--- PASS: TestE2ENativeAgainstARealServer' e2e.log
 
   vuln:
     name: govulncheck

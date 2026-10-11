@@ -42,7 +42,7 @@ func flat(buf []byte) bool {
 // The view shows what the ViewModel holds, and a click goes back to it.
 func TestViewBindsAndDispatches(t *testing.T) {
 	f := newFixture(t)
-	v := newView(f.vm, f.q, nil)
+	v := newView(f.vm, nil, f.q, nil)
 	buf := layout(t, v)
 	if strings.Join(v.servers.Items, "|") != "Demo server" || strings.Join(v.entries.Items, "|") != "files/" {
 		t.Fatalf("servers %q, entries %q", v.servers.Items, v.entries.Items)

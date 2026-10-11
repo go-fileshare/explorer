@@ -33,9 +33,9 @@ type fakeHost struct {
 	delivered chan struct{} // a pick handed over: the test waits for it
 }
 
-func (h *fakeHost) Download(u string) {
+func (h *fakeHost) Download(c *dav.Client, e dav.Entry) {
 	h.mu.Lock()
-	h.downloads = append(h.downloads, u)
+	h.downloads = append(h.downloads, c.DownloadURL(e.Path))
 	h.mu.Unlock()
 }
 func (h *fakeHost) Navigate(u string) {
@@ -76,7 +76,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	t.Cleanup(d.Close)
 	f := &fixture{t: t, d: d, h: &fakeHost{delivered: make(chan struct{}, 1)}, q: mvvm.NewQueue(nil)}
-	f.vm = newViewModel(context.Background(), client.New(d.URL, nil, nil), f.h, f.q)
+	f.vm = newViewModel(context.Background(), portalBackend{client.New(d.URL, nil, nil)}, f.h, f.q)
 	f.vm.Start()
 	f.settle()
 	return f
@@ -329,7 +329,7 @@ func TestNoServer(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	q := mvvm.NewQueue(nil)
-	vm := newViewModel(context.Background(), client.New(srv.URL, nil, nil), &fakeHost{}, q)
+	vm := newViewModel(context.Background(), portalBackend{client.New(srv.URL, nil, nil)}, &fakeHost{}, q)
 	vm.Start()
 	for vm.pending > 0 || q.Len() > 0 {
 		q.Drain()

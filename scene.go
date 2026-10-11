@@ -42,9 +42,16 @@ type view struct {
 	name                                 *toolkit.Entry
 	up, open, download, upload, del      *toolkit.Button
 	newFolder, rename, duplicate, logout *toolkit.Button
+	// The local picker's page, when there is one (natively).
+	pages                         *toolkit.Stack
+	local                         *toolkit.ListBox
+	localDir                      *toolkit.Label
+	localUp, localOpen, localStop *toolkit.Button
 }
 
-func newView(vm *viewModel, q *mvvm.Queue, invalidate func()) *view {
+// newView builds the View of vm; pk, when not nil, is the local file picker,
+// shown in place of the server's files while it is open.
+func newView(vm *viewModel, pk *picker, q *mvvm.Queue, invalidate func()) *view {
 	v := &view{
 		servers: toolkit.NewListBox(nil), entries: toolkit.NewListBox(nil),
 		user: toolkit.NewLabel(""), dir: toolkit.NewLabel(""), status: toolkit.NewLabel(""),
@@ -99,9 +106,25 @@ func newView(vm *viewModel, q *mvvm.Queue, invalidate func()) *view {
 	right.AddFixed(actions, rowH)
 	right.AddFixed(naming, rowH)
 
+	v.pages = toolkit.NewStack()
+	v.pages.AddPage("files", right)
+	if pk != nil {
+		v.pages.AddPage("pick", v.pickerPage(pk, invalidate))
+		pk.Visible.SubscribeChanged(func() {
+			page := "files"
+			if pk.Visible.Get() {
+				page = "pick"
+			}
+			v.pages.SetVisible(page)
+			if invalidate != nil {
+				invalidate()
+			}
+		})
+	}
+
 	body := toolkit.NewHBox()
 	body.AddFixed(left, sideW)
-	body.Append(right)
+	body.Append(v.pages)
 
 	col := toolkit.NewVBox()
 	col.AddFixed(header, rowH)
@@ -109,4 +132,28 @@ func newView(vm *viewModel, q *mvvm.Queue, invalidate func()) *view {
 	col.AddFixed(v.status, statusH)
 	v.root = &root{VBox: col, q: q}
 	return v
+}
+
+// pickerPage is the local picker: a folder of this computer, and how to
+// move through it or choose a file.
+func (v *view) pickerPage(pk *picker, invalidate func()) toolkit.Widget {
+	v.local, v.localDir = toolkit.NewListBox(nil), toolkit.NewLabel("")
+	v.localDir.Ellipsis = true
+	v.localUp, v.localOpen, v.localStop = toolkit.NewButton("Up", nil), toolkit.NewButton("Open", nil), toolkit.NewButton("Cancel", nil)
+	mvvmtk.BindListItems(v.local, pk.Entries, pickerLine, invalidate)
+	mvvmtk.BindListSelection(v.local, pk.Sel, invalidate)
+	mvvmtk.BindLabel(v.localDir, pk.Status, invalidate)
+	mvvmtk.BindCommand(v.localUp, pk.Up, invalidate)
+	mvvmtk.BindCommand(v.localOpen, pk.Open, invalidate)
+	mvvmtk.BindCommand(v.localStop, pk.Cancel, invalidate)
+	actions := toolkit.NewHBox()
+	for _, b := range []*toolkit.Button{v.localUp, v.localOpen, v.localStop} {
+		actions.AddFixed(b, buttonW)
+	}
+	page := toolkit.NewVBox()
+	page.AddFixed(toolkit.NewLabel("Upload a file from this computer: open it"), titleH)
+	page.AddFixed(v.localDir, titleH)
+	page.Append(v.local)
+	page.AddFixed(actions, rowH)
+	return page
 }
