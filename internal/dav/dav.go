@@ -12,6 +12,8 @@ package dav
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -276,27 +278,140 @@ type Source interface {
 	ReadPiece(ctx context.Context, off, n int64) ([]byte, error)
 }
 
-// Upload writes src at p, in pieces: an empty PUT of p.part, each piece
-// appended where the last ended (go-filesystems/webdav v0.6.0), then a MOVE
-// to p -- so nobody sees half a file under its name, and no request holds the
-// whole file. progress, when not nil, is told the bytes sent so far. A
-// failure leaves p as it was, and tries to remove the part file.
-func (c *Client) Upload(ctx context.Context, p string, src Source, overwrite bool, progress func(sent int64)) (err error) {
-	part := p + ".part"
-	res, err := c.send(ctx, "upload", http.MethodPut, part, []byte{})
+// A Fingerprinter is a Source that can say which file it is -- its name,
+// size and modification time, hashed -- so that an upload that failed can be
+// resumed by the same file, and never by another one of the same name.
+type Fingerprinter interface {
+	Fingerprint() string
+}
+
+// Fingerprint is the fingerprint of a file of that name, size and
+// modification time (in any unit, consistently): 16 hex digits.
+func Fingerprint(name string, size, modified int64) string {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%d", name, size, modified)))
+	return hex.EncodeToString(h[:8])
+}
+
+// tailCheck is how much of a part file's end is read back and compared with
+// the source before an upload resumes after it.
+const tailCheck = 64 << 10
+
+// Stat is what the server says of p (PROPFIND, Depth 0).
+func (c *Client) Stat(ctx context.Context, p string) (Entry, error) {
+	res, err := c.send(ctx, "stat", "PROPFIND", p, []byte(propfindBody),
+		"Depth", "0", "Content-Type", "application/xml; charset=utf-8")
 	if err != nil {
-		return err
+		return Entry{}, err
 	}
-	if err := expect("upload", part, res, http.StatusCreated, http.StatusNoContent); err != nil {
-		return err
+	if res.StatusCode != http.StatusMultiStatus {
+		return Entry{}, expect("stat", p, res)
+	}
+	defer res.Body.Close()
+	var ms multistatus
+	if err := xml.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&ms); err != nil || len(ms.Responses) == 0 {
+		return Entry{}, fmt.Errorf("stat %s: no answer for it", p)
+	}
+	e := Entry{Path: p, Name: path.Base(strings.TrimSuffix(p, "/"))}
+	for _, ps := range ms.Responses[0].Propstat {
+		if !strings.Contains(ps.Status, " 200 ") {
+			continue
+		}
+		e.Dir = e.Dir || ps.Prop.ResourceType.Collection != nil
+		if n, err := strconv.ParseInt(strings.TrimSpace(ps.Prop.Length), 10, 64); err == nil {
+			e.Size = n
+		}
+	}
+	return e, nil
+}
+
+// readRange reads the n bytes of p at off (a Range GET, answered 206).
+func (c *Client) readRange(ctx context.Context, p string, off, n int64) ([]byte, error) {
+	res, err := c.send(ctx, "upload", http.MethodGet, p, nil, "Range", fmt.Sprintf("bytes=%d-%d", off, off+n-1))
+	if err != nil {
+		return nil, err
+	}
+	if res.StatusCode != http.StatusPartialContent {
+		return nil, expect("upload", p, res)
+	}
+	defer res.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(res.Body, n+1))
+	if err != nil || int64(len(b)) != n {
+		return nil, fmt.Errorf("upload %s: read back %d bytes at %d, want %d", p, len(b), off, n)
+	}
+	return b, nil
+}
+
+// resumeAt is where an upload of src into part may resume: the part's size,
+// when the part is there, no larger than src, and its last bytes are src's
+// at the same place; 0 otherwise, the part then started again.
+func (c *Client) resumeAt(ctx context.Context, part string, src Source) int64 {
+	e, err := c.Stat(ctx, part)
+	if err != nil || e.Dir || e.Size <= 0 || e.Size > src.Size() {
+		return 0
+	}
+	n := min(int64(tailCheck), e.Size)
+	theirs, err := c.readRange(ctx, part, e.Size-n, n)
+	if err != nil {
+		return 0
+	}
+	ours, err := src.ReadPiece(ctx, e.Size-n, n)
+	if err != nil || !bytes.Equal(ours, theirs) {
+		return 0
+	}
+	return e.Size
+}
+
+// Resumable says whether a failed upload can be resumed -- its part file
+// kept -- by uploading the same file again: after a failure of the network,
+// the server or the reading of a piece, yes; after a refusal (4xx, a full
+// share: 507) or a cancellation, no.
+func Resumable(err error) bool {
+	var e *Error
+	if errors.As(err, &e) {
+		return e.Status >= 500 && e.Status != http.StatusInsufficientStorage
+	}
+	return !errors.Is(err, context.Canceled)
+}
+
+// Upload writes src at p, in pieces: each piece appended to a part file where
+// the last ended (go-filesystems/webdav v0.6.0), then a MOVE to p -- so nobody
+// sees half a file under its name, and no request holds the whole file.
+// progress, when not nil, is told the bytes sent so far.
+//
+// A Source that is a Fingerprinter resumes: its part file is named after its
+// fingerprint (<p>.<fingerprint>.part), and an upload of the same file after
+// a failure starts where the part ends -- once the part's last 64 KiB have
+// been read back and found equal to the file's. A failure of the network or
+// the server keeps the part for that; a refusal removes it. Any other Source
+// starts from nothing (<p>.part), and a failure removes its part. A failure
+// leaves p as it was.
+func (c *Client) Upload(ctx context.Context, p string, src Source, overwrite bool, progress func(sent int64)) (err error) {
+	part, resumable := p+".part", false
+	if f, ok := src.(Fingerprinter); ok {
+		part, resumable = p+"."+f.Fingerprint()+".part", true
+	}
+	var off int64
+	if resumable {
+		off = c.resumeAt(ctx, part, src)
+	}
+	if off == 0 {
+		res, err := c.send(ctx, "upload", http.MethodPut, part, []byte{})
+		if err != nil {
+			return err
+		}
+		if err := expect("upload", part, res, http.StatusCreated, http.StatusNoContent); err != nil {
+			return err
+		}
+	} else if progress != nil {
+		progress(off)
 	}
 	defer func() {
-		if err != nil {
+		if err != nil && (!resumable || !Resumable(err)) {
 			_ = c.Delete(context.WithoutCancel(ctx), part)
 		}
 	}()
 	size := src.Size()
-	for off := int64(0); off < size; {
+	for off < size {
 		n := min(c.Piece, size-off)
 		b, err := src.ReadPiece(ctx, off, n)
 		if err != nil {
@@ -322,7 +437,7 @@ func (c *Client) Upload(ctx context.Context, p string, src Source, overwrite boo
 	if overwrite {
 		ow = "T"
 	}
-	res, err = c.send(ctx, "upload", "MOVE", part, nil, "Destination", c.url(p), "Overwrite", ow)
+	res, err := c.send(ctx, "upload", "MOVE", part, nil, "Destination", c.url(p), "Overwrite", ow)
 	if err != nil {
 		return err
 	}

@@ -122,6 +122,11 @@ func TestOSFS(t *testing.T) {
 	if err != nil || u.Name != "a.txt" || u.Src.Size() != 10 {
 		t.Fatalf("%+v %v", u, err)
 	}
+	// It says which file it is, so that only it resumes its upload.
+	fi, _ := os.Stat(filepath.Join(dir, "a.txt"))
+	if fp, ok := u.Src.(dav.Fingerprinter); !ok || fp.Fingerprint() != dav.Fingerprint("a.txt", 10, fi.ModTime().UnixMilli()) {
+		t.Fatal("a local file without its fingerprint")
+	}
 	if b, err := u.Src.ReadPiece(context.Background(), 3, 4); err != nil || string(b) != "3456" {
 		t.Fatalf("%q %v", b, err)
 	}

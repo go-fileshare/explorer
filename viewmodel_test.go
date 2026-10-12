@@ -313,6 +313,15 @@ func TestFailures(t *testing.T) {
 			t.Errorf("%v: %q, want %q", err, got, want)
 		}
 	}
+	// An upload that can be resumed says how; a refused one does not.
+	f.vm.fail("Upload", errors.New("connection reset"))
+	if !strings.HasSuffix(f.vm.Status.Get(), "to resume where it stopped.") {
+		t.Errorf("a resumable upload: %q", f.vm.Status.Get())
+	}
+	f.vm.fail("Upload", &dav.Error{Status: 507})
+	if strings.Contains(f.vm.Status.Get(), "resume") {
+		t.Errorf("a refused upload offered a resume: %q", f.vm.Status.Get())
+	}
 	f.vm.fail("x", fmt.Errorf("wrapped: %w", client.ErrNotLoggedIn))
 	if len(f.h.navigated) != 1 || !strings.Contains(f.vm.Status.Get(), "not logged in") {
 		t.Fatal(f.h.navigated, f.vm.Status.Get())

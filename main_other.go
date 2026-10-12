@@ -188,18 +188,25 @@ func (osFS) Source(path string) (upload, error) {
 	if !fi.Mode().IsRegular() {
 		return upload{}, fmt.Errorf("%s is not a file", path)
 	}
-	return upload{Name: filepath.Base(path), Src: localFile{path: path, size: fi.Size()}}, nil
+	return upload{Name: filepath.Base(path), Src: localFile{path: path, size: fi.Size(), modified: fi.ModTime().UnixMilli()}}, nil
 }
 
 // localFile is a file of this computer, read a piece at a time and opened
 // for each piece: nothing stays open once the upload is over, however it
 // ends. A file that changes size meanwhile fails the upload.
 type localFile struct {
-	path string
-	size int64
+	path     string
+	size     int64
+	modified int64 // ms since the epoch, as a browser's File says it
 }
 
 func (l localFile) Size() int64 { return l.size }
+
+// Fingerprint is the file's name, size and time: an upload that failed is
+// resumed by the same file only.
+func (l localFile) Fingerprint() string {
+	return dav.Fingerprint(filepath.Base(l.path), l.size, l.modified)
+}
 
 func (l localFile) ReadPiece(_ context.Context, off, n int64) ([]byte, error) {
 	f, err := os.Open(l.path)

@@ -157,6 +157,10 @@ func async[T any](vm *viewModel, what string, fn func(ctx context.Context) (T, e
 }
 
 func (vm *viewModel) fail(what string, err error) {
+	if what == "Upload" && !errors.Is(err, client.ErrNotLoggedIn) && dav.Resumable(err) {
+		// The part file was kept: say how to use it.
+		defer func() { vm.Status.Set(vm.Status.Get() + " Upload the same file again to resume where it stopped.") }()
+	}
 	if errors.Is(err, client.ErrNotLoggedIn) {
 		vm.Status.Set("You are not logged in, or your session has ended.")
 		vm.host.Navigate(vm.portal.LoginURL("/explorer/"))
