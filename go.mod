@@ -5,14 +5,14 @@ go 1.27.2
 require (
 	github.com/go-authn/oidc v0.4.0
 	github.com/go-authn/rp v0.1.1
-	github.com/go-fileshare/portal v0.3.0
+	github.com/go-fileshare/portal v0.3.1
 	github.com/go-filesystems/osfs v0.3.0
 	github.com/go-filesystems/webdav v0.6.0
 	github.com/go-widgets/mvvm v0.15.0
 	github.com/go-widgets/mvvmtk v0.15.0
-	github.com/go-widgets/painter v0.15.0
+	github.com/go-widgets/painter v0.16.0
 	github.com/go-widgets/toolkit v0.329.0
-	github.com/go-widgets/window v0.89.0
+	github.com/go-widgets/window v0.89.1
 	github.com/hashicorp/hcl/v2 v2.25.0
 )
 
