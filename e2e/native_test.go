@@ -24,6 +24,21 @@ func (s bytesSource) ReadPiece(_ context.Context, off, n int64) ([]byte, error) 
 	return s[off : off+n], nil
 }
 
+// flaky is a file that says which file it is, and fails when the piece at
+// failAt is read: the network going away half way, as the server sees it.
+type flaky struct {
+	bytesSource
+	failAt int64
+}
+
+func (f *flaky) Fingerprint() string { return dav.Fingerprint("resumed.bin", f.Size(), 1) }
+func (f *flaky) ReadPiece(ctx context.Context, off, n int64) ([]byte, error) {
+	if f.failAt > 0 && off >= f.failAt {
+		return nil, errors.New("gone")
+	}
+	return f.bytesSource.ReadPiece(ctx, off, n)
+}
+
 // The native explorer's backend -- a public client logging in through a
 // loopback listener (go-authn/rp, RFC 8252) and calling the server's WebDAV
 // with a token for its oidc audience -- against a REAL fileshare. No window:
@@ -92,6 +107,31 @@ func TestE2ENativeAgainstARealServer(t *testing.T) {
 	}
 	if err := c.Move(ctx, "/files/big.bin", "/files/readme.txt"); !dav.Exists(err) {
 		t.Fatalf("a move onto a file: %v", err)
+	}
+	// An upload that failed after its first piece, resumed: the part is
+	// kept on the server between the two, and the second sends the rest.
+	src := &flaky{bytesSource: big, failAt: 8 << 20}
+	if err := c.Upload(ctx, "/files/resumed.bin", src, false, nil); err == nil {
+		t.Fatal("the failing upload went through")
+	}
+	parts, _ := filepath.Glob(filepath.Join(a.files, "resumed.bin.*.part"))
+	if len(parts) != 1 {
+		t.Fatalf("parts on the server: %v", parts)
+	}
+	if fi, _ := os.Stat(parts[0]); fi.Size() != 8<<20 {
+		t.Fatalf("a part of %d bytes", fi.Size())
+	}
+	src.failAt = 0
+	var first int64 = -1
+	if err := c.Upload(ctx, "/files/resumed.bin", src, false, func(sent int64) {
+		if first < 0 {
+			first = sent
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(a.files, "resumed.bin")); !bytes.Equal(got, big) || first != 8<<20 {
+		t.Fatalf("resumed: %d bytes on disk, first progress at %d", len(got), first)
 	}
 	var de *dav.Error
 	if _, err := b.DAV("wrong").List(ctx, "/files/"); !errors.As(err, &de) || de.Status != http.StatusUnauthorized {

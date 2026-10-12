@@ -24,6 +24,13 @@ import (
 // share's prefix as fileshare sets it.
 func serve(t *testing.T) (*Client, string, *atomic.Int64) {
 	t.Helper()
+	return serveHook(t, nil)
+}
+
+// serveHook is serve with hook in front of the server: it sees every
+// request, and answers it instead when it returns true.
+func serveHook(t *testing.T, hook func(w http.ResponseWriter, r *http.Request) bool) (*Client, string, *atomic.Int64) {
+	t.Helper()
 	dir := t.TempDir()
 	fsys, err := osfs.Open(dir)
 	if err != nil {
@@ -40,6 +47,9 @@ func serve(t *testing.T) (*Client, string, *atomic.Int64) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength > largest.Load() {
 			largest.Store(r.ContentLength)
+		}
+		if hook != nil && hook(w, r) {
+			return
 		}
 		h.ServeHTTP(w, r)
 	}))

@@ -50,8 +50,16 @@ an upload with 416.
   sending it. So a file is read 8 MiB at a time from the browser's `File`
   (`slice().arrayBuffer()`): first an empty PUT of `<name>.part`, then each piece
   with a `Content-Range` that starts where the last one ended, then a MOVE to the
-  name. Nobody sees half a file under its name, and a failure removes the part
-  file. The portal takes 16 MiB per PUT.
+  name. Nobody sees half a file under its name. The portal takes 16 MiB per PUT.
+- **An upload that fails can be resumed** (since v0.3.0). The part file is named
+  after the file's fingerprint (name, size, modification time):
+  `<name>.<fingerprint>.part`. When the same file is uploaded again, the explorer
+  asks the part's size (`PROPFIND`, Depth 0), reads its last 64 KiB back (a
+  `Range` GET), and continues from there only if those bytes are the file's.
+  Otherwise it starts again, so a different file with the same name is never
+  continued. A failure of the network or the server keeps the part, and the
+  explorer says so. A refusal (403, a full share: 507) or a cancellation removes
+  it. Part files are hidden from the listing.
 - **Nothing is replaced without asking.** A rename, a copy or an upload onto a name
   that is taken is refused (`Overwrite: F`; RFC 4918 makes `T` the default, which
   would silently destroy the file a rename lands on). Deleting takes two presses,
@@ -153,8 +161,8 @@ from a public repository is how pictures get published by accident.
 
 - The system's own file dialog natively (the explorer's picker chooses one file
   at a time).
-- Resuming an upload after a failure: the pieces would allow it, but today the
-  part file is removed.
+- Removing part files that nobody comes back for: a failed upload that is never
+  retried leaves its part on the server, hidden from the listing.
 - Drag and drop, and several selected entries at once.
 
 ## Licence

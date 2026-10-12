@@ -88,6 +88,12 @@ type jsFile struct{ f js.Value }
 
 func (j jsFile) Size() int64 { return int64(j.f.Get("size").Float()) }
 
+// Fingerprint is the file's name, size and time (File.lastModified): an
+// upload that failed is resumed by the same file only.
+func (j jsFile) Fingerprint() string {
+	return dav.Fingerprint(j.f.Get("name").String(), j.Size(), int64(j.f.Get("lastModified").Float()))
+}
+
 func (j jsFile) ReadPiece(ctx context.Context, off, n int64) ([]byte, error) {
 	type result struct {
 		b   []byte
