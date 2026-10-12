@@ -107,6 +107,12 @@ jobs:
           GOBIN="$RUNNER_TEMP/bin" go install "github.com/go-fileshare/fileshare@${FILESHARE_VERSION}"
       - name: The browser test, which must run rather than skip
         working-directory: e2e
+        # The e2e module is a harness, never released nor imported, with a
+        # replace onto the module above. A dependency update tidies the two
+        # go.mod files one after the other, and the second against the first
+        # as it was: a go.mod here left one require short would fail this
+        # lane with nothing broken. -mod=mod lets go settle it.
+        env: { GOFLAGS: -mod=mod }
         run: |
           set -o pipefail
           PORTAL="$RUNNER_TEMP/bin/portal" FILESHARE="$RUNNER_TEMP/bin/fileshare" CHROME="$(command -v google-chrome)" \
