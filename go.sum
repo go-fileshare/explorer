@@ -16,8 +16,8 @@ github.com/ebitengine/purego v0.11.1 h1:2zpWRSQNVKN4eKsKO9eM1ILDgWfYMY9GwqRmK6Xe
 github.com/ebitengine/purego v0.11.1/go.mod h1:DCHPP08djqhNSoTfImcnHYQRZmd0qhakvrozqaEYhGQ=
 github.com/go-appdirs/outdir v0.3.0 h1:oqVLh83JrPdfh+FEUYmDwevp3oV1xC1qV2LxTmZn5L4=
 github.com/go-appdirs/outdir v0.3.0/go.mod h1:NXh7y7uVjrhGjUmoWb+JuQITVCs7Bj+PrRn/aNCBkb4=
-github.com/go-authn/oidc v0.4.0 h1:3G6p/129XjIaVkCN/n6Fqrf3Glb70wm65IkkEbyw1Fs=
-github.com/go-authn/oidc v0.4.0/go.mod h1:d46Qe8EHpNA5hadeFlUUYMHCDkYzwwNAP6AYu9KdxYk=
+github.com/go-authn/oidc v0.4.1 h1:G1tjLAswrPUvOraciHrb+vOYSSHdMuCKBryrHrLTWHo=
+github.com/go-authn/oidc v0.4.1/go.mod h1:d46Qe8EHpNA5hadeFlUUYMHCDkYzwwNAP6AYu9KdxYk=
 github.com/go-authn/rp v0.1.1 h1:Ci7w4h2jngGk8qjShTehLcWVXmGigDjyI6zxxe0pLr0=
 github.com/go-authn/rp v0.1.1/go.mod h1:qM5qA1GxsYUlv0Y/wGcxDdk9tuUYKTNEn+3hJtp9YPI=
 github.com/go-crdt/collab v0.77.2 h1:oB0o5lp+YqmvmxlQBvVl8z8q7Fd/7LuXOy5CBPKLNIU=
