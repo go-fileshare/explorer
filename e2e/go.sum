@@ -1,9 +1,9 @@
-github.com/chromedp/cdproto v0.158.3 h1:vLLW+mou2kaaol1Z7E5hFhoqFoEDMJYic/7lG8FsIhI=
-github.com/chromedp/cdproto v0.158.3/go.mod h1:h68JaIuFr9o3yiayxEYhBdvaxgYO3shDrPSYhNlyfu0=
+github.com/chromedp/cdproto v0.158.4 h1:5t2VGQGp2OuaGPnKIpBikPplESrGMjQMQ4d+7e+eilk=
+github.com/chromedp/cdproto v0.158.4/go.mod h1:h68JaIuFr9o3yiayxEYhBdvaxgYO3shDrPSYhNlyfu0=
 github.com/chromedp/chromedp v0.21.0 h1:nVHgS2LHyhZJ1l3BWRbG2eFIFYiJMnvkJbELbd8WBoQ=
 github.com/chromedp/chromedp v0.21.0/go.mod h1:6z1Y5FdKUxRzxx2qcC5h1xjaBJrSWrZp1mjgITfNZig=
-github.com/go-authn/oidc v0.4.0 h1:3G6p/129XjIaVkCN/n6Fqrf3Glb70wm65IkkEbyw1Fs=
-github.com/go-authn/oidc v0.4.0/go.mod h1:d46Qe8EHpNA5hadeFlUUYMHCDkYzwwNAP6AYu9KdxYk=
+github.com/go-authn/oidc v0.4.1 h1:G1tjLAswrPUvOraciHrb+vOYSSHdMuCKBryrHrLTWHo=
+github.com/go-authn/oidc v0.4.1/go.mod h1:d46Qe8EHpNA5hadeFlUUYMHCDkYzwwNAP6AYu9KdxYk=
 github.com/go-authn/rp v0.1.1 h1:Ci7w4h2jngGk8qjShTehLcWVXmGigDjyI6zxxe0pLr0=
 github.com/go-authn/rp v0.1.1/go.mod h1:qM5qA1GxsYUlv0Y/wGcxDdk9tuUYKTNEn+3hJtp9YPI=
 github.com/go-fileshare/portal v0.3.1 h1:F/oulOGBvzfjtno/c+Iibdf/nDCPPS8aAjDI2dEU3cs=
