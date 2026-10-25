@@ -1,6 +1,6 @@
 module github.com/go-fileshare/explorer/e2e
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/chromedp/cdproto v0.158.3
