@@ -73,6 +73,31 @@ an upload with 416.
 The page weighs **4.6 MB compressed** (18.5 MB of wasm, as `build.sh` builds it;
 the portal sends the `.gz`).
 
+## Embedded by a page that holds the files
+
+A page that has the files itself can embed the explorer without a portal (since
+v0.4.0). The [go-filesystems playground](https://go-filesystems.github.io/playground/)
+does this: its engine serves an opened disk image's WebDAV inside the tab. The
+page puts the explorer's files beside its own, opens `explorer.html` in a
+**same-origin iframe**, and gives it a bridge:
+
+```js
+window.fileshareExplorerBridge = {
+  label: "disk.img",                        // the one server's name
+  request(method, path, headers, body) {    // -> Promise<{status, headers, body}>
+    /* answer the WebDAV request; headers are [name, value] pairs, body a Uint8Array */
+  },
+  download(path, name) { /* save the file */ },
+  close() { /* "Log out": leave the explorer */ },
+  state(json) { /* optional: {status, dir, entries}, what the explorer shows */ },
+};
+```
+
+The explorer finds the bridge on its parent and uses it instead of the portal.
+There is no login and no token, and no request leaves the page. A parent of
+another origin cannot be read, so it is never taken for a bridge. Each body is
+bounded either way (16 MiB), and uploads go in 4 MiB pieces.
+
 ## Natively
 
 ```sh
