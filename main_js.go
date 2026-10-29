@@ -3,7 +3,9 @@
 //go:build js && wasm
 
 // The browser build: served by go-fileshare/portal at /explorer/, it reaches
-// the servers' files through the portal's /dav/, which holds the tokens.
+// the servers' files through the portal's /dav/, which holds the tokens --
+// or, embedded by a page that holds the files itself, through that page's
+// bridge (bridge_js.go).
 package main
 
 import (
@@ -20,8 +22,17 @@ import (
 )
 
 func main() {
-	origin := js.Global().Get("location").Get("origin").String()
-	p := client.New(origin, nil, client.WebLocks(client.RefreshLock))
+	var (
+		be backend
+		h  host = browserHost{}
+	)
+	bridge, bridged := findBridge()
+	if bridged {
+		be, h = bridgeBackend{bridge}, bridgeHost{b: bridge}
+	} else {
+		origin := js.Global().Get("location").Get("origin").String()
+		be = portalBackend{client.New(origin, nil, client.WebLocks(client.RefreshLock))}
+	}
 	w, err := window.Open(window.Config{Title: "fileshare explorer", Canvas: "screen"})
 	if err != nil {
 		println("explorer:", err.Error())
@@ -32,9 +43,12 @@ func main() {
 		wake = r.Repaint
 	}
 	q := mvvm.NewQueue(wake)
-	vm := newViewModel(context.Background(), portalBackend{p}, browserHost{}, q)
+	vm := newViewModel(context.Background(), be, h, q)
 	v := newView(vm, nil, q, nil)
 	expose(vm)
+	if bridged {
+		reportTo(bridge, vm)
+	}
 	vm.Start()
 	_ = w.Run(v.root)
 }
