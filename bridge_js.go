@@ -82,7 +82,7 @@ func (k bridgeBackend) DAV(string) *dav.Client {
 
 func (bridgeBackend) EnsureToken(context.Context, string) error { return nil }
 func (bridgeBackend) Logout(context.Context) (string, error)    { return "", nil }
-func (bridgeBackend) LoginURL(string) string                     { return "" }
+func (bridgeBackend) LoginURL(string) string                    { return "" }
 
 // bridgeMax bounds a body either way: a piece, or a listing.
 const bridgeMax = pieceMax
